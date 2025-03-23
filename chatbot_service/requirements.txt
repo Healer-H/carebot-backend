@@ -1,0 +1,11 @@
+fastapi==0.115.11
+uvicorn==0.22.0
+motor==3.1.2
+pymongo==4.3.3
+pyjwt==2.6.0
+python-dotenv==1.0.0
+chromadb==0.6.3
+openai==1.1.1
+backoff==2.2.1
+pydantic==2.7.0 
+pydantic-settings==2.8.1
