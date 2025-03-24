@@ -3,6 +3,7 @@ from typing import Optional
 from datetime import datetime
 from uuid import UUID, uuid4
 
+
 class MessageFeedback(BaseModel):
     feedback_id: Optional[UUID] = Field(default_factory=uuid4)
     message_id: UUID
@@ -11,9 +12,10 @@ class MessageFeedback(BaseModel):
     feedback: Optional[str] = None
     is_helpful: Optional[bool] = None
     created_at: Optional[datetime] = None
-    
+
     class Config:
-        orm_mode = True
+        from_attributes = True
+
 
 class FeedbackResponse(BaseModel):
     success: bool
