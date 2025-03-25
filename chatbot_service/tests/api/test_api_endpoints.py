@@ -7,6 +7,16 @@ from main import app
 from models.chat_message import MessageResponse
 from models.intent import Intent, IntentType, IntentClassificationResponse
 
+import jwt
+from datetime import datetime, timedelta
+from config import settings
+
+def create_test_token():
+    payload = {
+        "user_id": "test_user",
+        "exp": datetime.utcnow() + timedelta(minutes=10)
+    }
+    return jwt.encode(payload, settings.TOKEN_SECRET_KEY, algorithm="HS256")
 
 @pytest.fixture
 def client():
@@ -15,15 +25,14 @@ def client():
 
 @pytest.fixture
 def auth_headers():
-    return {"Authorization": "Bearer test_token"}
+    token = create_test_token()
+    print(f"token='{token}'")  # Optional để debug
+    return {"Authorization": f"Bearer {token}"}
 
 
 def test_intent_classify_endpoint(client, auth_headers):
     # Mock the dependencies
-    with patch(
-        "api.intent_controller.get_intent_classifier"
-    ) as mock_get_classifier, patch("api.middleware.get_current_user") as mock_get_user:
-
+    with patch("api.intent_controller.get_intent_classifier") as mock_get_classifier:
         # Setup mocks
         mock_classifier = AsyncMock()
         mock_intent = Intent(
@@ -38,7 +47,7 @@ def test_intent_classify_endpoint(client, auth_headers):
         )
         mock_classifier.classify.return_value = mock_response
         mock_get_classifier.return_value = mock_classifier
-        mock_get_user.return_value = {"user_id": "test_user"}
+        #mock_get_user.return_value = {"user_id": "test_user"}
 
         # Test data
         request_data = {
