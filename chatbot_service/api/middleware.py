@@ -12,11 +12,13 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     """
     try:
         token = credentials.credentials
+        print(f"{token=}") 
         payload = jwt.decode(
             token,
             settings.TOKEN_SECRET_KEY,
             algorithms=["HS256"]
         )
+        print(f"{payload=}")
         
         # Kiểm tra thời hạn token
         if payload.get("exp") and datetime.utcnow().timestamp() > payload["exp"]:

@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from api.router import router as api_router
 # from api.middleware import auth_middleware
@@ -8,6 +9,7 @@ from services.vector_db_manager import VectorDatabaseManager
 from services.llm_client import LLMClient
 from config import Settings
 from utils.log_manager import LogManager
+import subprocess
 import logging
 
 app = FastAPI(title="CareBot Chatbot Service")
@@ -31,18 +33,28 @@ logger = logging.getLogger("main")
 #     log_file="logs/chatbot_service.log"
 # })
 
-@app.on_event("startup")
-async def startup_event():
-    # Khởi tạo kết nối database    
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Khởi tạo kết nối database
     # Khởi tạo các dịch vụ
-    pass
-
-@app.on_event("shutdown")
-async def shutdown_event():
+    yield
     # Đóng kết nối database
     # Dọn dẹp tài nguyên
-    pass
+    
+# @app.on_event("startup")
+# async def startup_event():
+#     # Khởi tạo kết nối database    
+#     start_chromadb_server_command = "chroma run --path chatbot_service/db/chromadb".split()
+#     subprocess.run(start_chromadb_server_command)    
+#    # Khởi tạo các dịch vụ
+#     pass
+
+# @app.on_event("shutdown")
+# async def shutdown_event():
+#     # Đóng kết nối database
+#     # Dọn dẹp tài nguyên
+#     pass
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=6789, reload=True)

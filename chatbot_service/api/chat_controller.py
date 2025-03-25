@@ -3,7 +3,7 @@ from typing import List, Optional
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from chatbot_service.core.message_service import MessageService, get_message_service
+from core.message_service import MessageService, get_message_service
 from repositories.chat_history_repo import ChatHistoryRepository, get_chat_repository
 from models.chat_message import ChatMessage, MessageResponse
 from models.conversation import Conversation, ConversationSummary

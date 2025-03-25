@@ -13,6 +13,8 @@ from core.emergency_detector import EmergencyDetector, get_emergency_detector
 from core.suggestion_generator import SuggestionGenerator, get_suggestion_generator
 from utils.context_builder import ContextBuilder
 from models.chat_message import ChatMessage, MessageResponse
+from core.intent_classification import IntentClassifier, get_intent_classifier
+from models.intent import Intent, IntentClassificationRequest, IntentType
 from config import settings
 
 logger = logging.getLogger("message_service")
@@ -29,6 +31,7 @@ class MessageService:
         response_formatter: ResponseFormatter,
         emergency_detector: EmergencyDetector,
         suggestion_generator: SuggestionGenerator,
+        intent_classifier: IntentClassifier,
     ):
         self.vector_db = vector_db
         self.llm_client = llm_client
@@ -38,6 +41,7 @@ class MessageService:
         self.response_formatter = response_formatter
         self.emergency_detector = emergency_detector
         self.suggestion_generator = suggestion_generator
+        self.intent_classifier = intent_classifier
         self.context_builder = ContextBuilder()
 
     async def process_message(
@@ -56,15 +60,48 @@ class MessageService:
             logger.warning(f"Unsafe input detected: {reason}")
             return self._create_safety_response(message, reason)
 
-        # Kiểm tra tình huống khẩn cấp
-        is_emergency, emergency_type = await self.emergency_detector.detect_emergency(
-            message.content
+        # Phân loại intent
+        intent_request = IntentClassificationRequest(
+            message=message.content,
+            user_id=message.user_id,
+            context=(
+                {"conversation_id": str(message.conversation_id)}
+                if message.conversation_id
+                else {}
+            ),
         )
-        if is_emergency:
-            logger.info(f"Emergency detected: {emergency_type}")
+
+        intent_response = await self.intent_classifier.classify(intent_request)
+        intent_result = intent_response.intent
+
+        # Xử lý dựa trên intent
+        if intent_result.primary_intent == IntentType.EMERGENCY:
+            emergency_type = "general"  # Default
+            if "emergency_type" in intent_result.entities:
+                emergency_types = intent_result.entities["emergency_type"]
+                if emergency_types:
+                    emergency_type = emergency_types[0]
+
+            logger.info(f"Emergency intent detected: {emergency_type}")
             return await self._handle_emergency(message, emergency_type)
 
-        # Xử lý tin nhắn
+        # Nếu intent không phải là medical_query hoặc general_chat và có redirect_service
+        # thì chuyển đến service tương ứng
+        if (
+            intent_result.primary_intent
+            not in [IntentType.MEDICAL_QUERY, IntentType.GENERAL_CHAT]
+            and intent_response.redirect_service
+        ):
+            # Trong trường hợp thực tế, đây là nơi sẽ redirect request đến service khác
+            # Ví dụ: streak service, location service
+            logger.info(f"Redirecting to {intent_response.redirect_service} service")
+
+            # Vì đây là một ví dụ đơn giản, chúng ta sẽ tạo một response giả lập
+            return await self._create_redirect_response(
+                message, intent_result, intent_response.redirect_service
+            )
+
+        # Xử lý tin nhắn cho medical_query hoặc general_chat
         processed_query = await self.message_processor.process(message.content)
 
         # Truy xuất thông tin liên quan
@@ -114,12 +151,83 @@ class MessageService:
             response=formatted_response,
             conversation_id=message.conversation_id,
             sources=sources,
-            intent={
-                "primary_intent": "medical_query",
-                "confidence": 0.95,
-            },  # placeholder
+            intent=intent_result.dict(),
             suggestions=suggestions,
             timestamp=message.created_at or datetime.utcnow(),
+        )
+
+    async def _create_redirect_response(
+        self, message: ChatMessage, intent: Intent, service: str
+    ) -> MessageResponse:
+        """
+        Tạo phản hồi khi cần chuyển hướng đến service khác
+        """
+        service_responses = {
+            "location": (
+                "Tôi thấy bạn đang tìm kiếm cơ sở y tế. "
+                "Đang kết nối bạn với dịch vụ tìm kiếm vị trí để hỗ trợ tốt nhất..."
+            ),
+            "streak": (
+                "Tôi thấy bạn quan tâm đến thử thách sức khỏe hàng ngày. "
+                "Đang kết nối bạn với dịch vụ Streak Challenge..."
+            ),
+            "emergency": (
+                "ĐÂY CÓ VẺ LÀ TÌNH HUỐNG KHẨN CẤP. "
+                "Đang kết nối bạn với dịch vụ hỗ trợ khẩn cấp..."
+            ),
+        }
+
+        response = service_responses.get(
+            service, f"Đang chuyển tiếp yêu cầu của bạn đến dịch vụ {service}..."
+        )
+
+        # Tạo gợi ý phù hợp với intent
+        suggestions = await self._get_intent_suggestions(intent.primary_intent)
+
+        return MessageResponse(
+            message_id=message.message_id,
+            response=response,
+            conversation_id=message.conversation_id,
+            sources=[],
+            intent=intent.dict(),
+            suggestions=suggestions,
+            timestamp=message.created_at or datetime.utcnow(),
+        )
+
+    async def _get_intent_suggestions(self, intent_type: IntentType) -> List[str]:
+        """
+        Tạo gợi ý dựa trên loại intent
+        """
+        intent_suggestions = {
+            IntentType.LOCATION_SEARCH: [
+                "Tìm bệnh viện gần nhất",
+                "Có nhà thuốc nào gần đây không?",
+                "Tôi cần tìm phòng khám nhi",
+            ],
+            IntentType.STREAK_CHALLENGE: [
+                "Thử thách hôm nay là gì?",
+                "Tôi đã hoàn thành streak được bao nhiêu ngày?",
+                "Gợi ý bài tập cho tôi",
+            ],
+            IntentType.EMERGENCY: [
+                "Cách sơ cứu khi bị bỏng",
+                "Triệu chứng đau tim",
+                "Xử lý khi bị ngất",
+            ],
+            IntentType.GENERAL_CHAT: [
+                "Làm thế nào để duy trì lối sống lành mạnh?",
+                "Cho tôi biết về CareBot",
+                "Tôi nên uống bao nhiêu nước mỗi ngày?",
+            ],
+        }
+
+        return intent_suggestions.get(
+            intent_type,
+            [
+                "Tôi có thể hỏi về triệu chứng của cảm cúm không?",
+                "Làm thế nào để duy trì lối sống lành mạnh?",
+                "Tìm bệnh viện gần nhất",
+            ],
         )
 
     def _create_safety_response(
@@ -184,13 +292,12 @@ def get_message_service(
     vector_db: VectorDatabaseManager = Depends(get_vector_db_manager),
     llm_client: LLMClient = Depends(get_llm_client),
     safety_guardrails: SafetyGuardrails = Depends(get_safety_guardrails),
-    source_citation: SourceCitationService = Depends(
-        get_source_citation_service),
+    source_citation: SourceCitationService = Depends(get_source_citation_service),
     message_processor: MessageProcessor = Depends(get_message_processor),
     response_formatter: ResponseFormatter = Depends(get_response_formatter),
     emergency_detector: EmergencyDetector = Depends(get_emergency_detector),
-    suggestion_generator: SuggestionGenerator = Depends(
-        get_suggestion_generator),
+    suggestion_generator: SuggestionGenerator = Depends(get_suggestion_generator),
+    intent_classifier: IntentClassifier = Depends(get_intent_classifier),
 ) -> MessageService:
     return MessageService(
         vector_db,
@@ -201,4 +308,5 @@ def get_message_service(
         response_formatter,
         emergency_detector,
         suggestion_generator,
+        intent_classifier,
     )
