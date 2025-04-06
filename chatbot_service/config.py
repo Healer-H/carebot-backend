@@ -12,7 +12,12 @@ class Settings(BaseSettings):
     # MongoDB
     MONGODB_URI: str = Field(..., env="MONGODB_URI")
     MONGODB_DB: str = Field(default="carebot", env="MONGODB_DB")
-
+    #DB
+    DB_USERNAME: str = Field(..., env="DB_USERNAME")
+    DB_PASSWORD: str = Field(..., env="DB_PASSWORD")
+    DB_HOST: str = Field(..., env="DB_HOST")
+    DB_PORT: str = Field(..., env="DB_PORT")
+    DB_NAME: str = Field(..., env="DB_NAME")
     # Vector Database (Chroma)
     CHROMA_HOST: str = Field(default="localhost", env="CHROMA_HOST")
     CHROMA_PORT: int = Field(default=8000, env="CHROMA_PORT")
@@ -59,6 +64,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "allow"
 
 
 settings = Settings()
