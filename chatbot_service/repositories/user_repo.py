@@ -1,6 +1,8 @@
 # repositories/user_repo.py
 from sqlalchemy.orm import Session
 from models.user import User
+from typing import Optional
+from sqlalchemy.exc import SQLAlchemyError
 
 class UserRepository:
     def __init__(self, db: Session):
@@ -24,3 +26,24 @@ class UserRepository:
         self.db.commit()
         self.db.refresh(db_user)
         return db_user
+    def update(self, user: User) -> Optional[User]:
+        """Cập nhật thông tin người dùng"""
+        try:
+            self.db.commit()
+            self.db.refresh(user)
+            return user
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            print(f"Database error: {e}")
+            return None
+
+    def delete(self, user: User) -> bool:
+        """Xóa người dùng"""
+        try:
+            self.db.delete(user)
+            self.db.commit()
+            return True
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            print(f"Database error: {e}")
+            return False

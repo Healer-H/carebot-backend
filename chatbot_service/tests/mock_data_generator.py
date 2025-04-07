@@ -6,7 +6,6 @@ import random
 from passlib.context import CryptContext
 import faker
 
-# Add the project root to path so we can import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.db_manager import Base, engine, SessionLocal
@@ -250,13 +249,7 @@ def main():
     """Main function to generate all mock data"""
     session = SessionLocal()
     
-    try:
-        # Ask for confirmation if user wants to reset the database
-        confirm = input("⚠️ This will reset your database and create new mock data. Proceed? (y/n): ")
-        if confirm.lower() != 'y':
-            print("Operation cancelled.")
-            return
-            
+    try:            
         # Drop and recreate all tables
         drop_tables()
         create_tables()
