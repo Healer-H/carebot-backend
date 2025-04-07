@@ -27,7 +27,12 @@ class ConversationListResponse(BaseModel):
 
 
 class MessageCreate(BaseModel):
+    role: str = Field(..., description="Role of the message sender (user | assistant)")
     content: str = Field(..., description="The content of the message")
+
+
+class MessagesCreate(BaseModel):
+    messages: List[MessageCreate] = Field(..., description="List of messages to add to the conversation")
 
 
 class ToolCallArguments(BaseModel):
@@ -49,7 +54,7 @@ class MessageResponse(BaseModel):
     role: str
     content: str
     tool_calls: Optional[List[Dict[str, Any]]] = None
-    tool_results: Optional[Dict[str, Any]] = None
+    tool_results: Optional[List[Dict[str, Any]]] = None
     created_at: str
 
 
@@ -108,9 +113,9 @@ def delete_conversation(conversation_id: int, db: Session = Depends(get_db)):
 
 @router.post("/conversations/{conversation_id}/messages", response_model=ChatResponse)
 def create_message(
-    conversation_id: int, message: MessageCreate, db: Session = Depends(get_db)
+    conversation_id: int, messages: MessagesCreate, db: Session = Depends(get_db)
 ):
-    """Send a message and get a response"""
+    """Send multiple message and get a response"""
     # Check if conversation exists
     conversation = ChatService.get_conversation(db, conversation_id)
     if not conversation:
@@ -119,9 +124,20 @@ def create_message(
             detail=f"Conversation {conversation_id} not found",
         )
 
-    # Generate response using RAG
+    latest_message = None
+    for message in messages.messages[::-1]:
+        if message.role == "user":
+            latest_message = message
+            break
+
+    if not latest_message:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No user message found",
+        )
+    
     response = ChatService.generate_response(
-        db, conversation_id, message.content)
+        db, conversation_id, latest_message.content)
 
     return {"message": response, "conversation_id": conversation_id}
 
