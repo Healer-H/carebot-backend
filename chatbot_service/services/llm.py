@@ -7,6 +7,9 @@ from tools import get_weather, get_current_location
 
 from core.config import settings
 
+
+MAX_TOOL_CALLS = 5  # Maximum number of tool calls allowed in a single response
+
 class LLMService:
     """Service for interacting with language models"""
     
@@ -227,7 +230,7 @@ class LLMService:
                     turn_number += 1
                     
                     # Safety check to prevent infinite loops
-                    if turn_number > 5:  # Limit to 5 turns of tool calling
+                    if turn_number > MAX_TOOL_CALLS:  
                         break
             
             return result
@@ -283,7 +286,7 @@ class LLMService:
                                 has_tool_calls = True
                                 break
             
-            while has_tool_calls and turn_number <= 5:  # Limit to 5 turns of tool calling
+            while has_tool_calls and turn_number <= MAX_TOOL_CALLS:
                 # Process current response with tool calls
                 tool_calls = []
                 tool_results = []
