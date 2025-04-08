@@ -10,7 +10,7 @@ class Badge(Base):
     __tablename__ = "badges"
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)
+    name = Column(String(100), nullable=False, unique=True)
     description = Column(Text)
     image_url = Column(String(255))
 

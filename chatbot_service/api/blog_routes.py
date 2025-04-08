@@ -138,10 +138,6 @@ def create_article(
     
     # If no author_id is provided, use the current user
     if article_data.author_id is None:
-        author_id = int(current_user["sub"])
-    else:
-        # Only admins can set a different author
-        # TODO: Implement admin check here
         author_id = article_data.author_id
     
     article = article_repo.create(

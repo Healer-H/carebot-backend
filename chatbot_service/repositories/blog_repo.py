@@ -53,9 +53,9 @@ class ArticleRepository:
     def __init__(self, db: Session):
         self.db = db
     
-    def get_all(self, skip: int = 0, limit: int = 10):
-        return self.db.query(Article).offset(skip).limit(limit).all()
-    
+    def get_all(self, limit: int = 10, offset: int = 0) -> List[Article]:
+        return self.db.query(Article).offset(offset).limit(limit).all()
+
     def get_by_id(self, article_id: int):
         return self.db.query(Article).filter(Article.id == article_id).first()
     
@@ -68,9 +68,9 @@ class ArticleRepository:
         return self.db.query(Article).join(Article.tags).filter(
             Tag.name == tag_name
         ).offset(skip).limit(limit).all()
-    
     def create(self, title: str, content: str, author_id: int, category_id: int, 
-               source: str = None, tags: List[Tag] = None):
+            source: str = None, tags: List[int] = None):  # 👈 sửa List[Tag] ➜ List[int]
+        
         article = Article(
             title=title,
             content=content,
@@ -78,10 +78,11 @@ class ArticleRepository:
             category_id=category_id,
             source=source
         )
-        
+
         if tags:
-            article.tags = tags
-            
+            tag_objs = self.db.query(Tag).filter(Tag.id.in_(tags)).all()
+            article.tags = tag_objs
+
         self.db.add(article)
         self.db.commit()
         self.db.refresh(article)

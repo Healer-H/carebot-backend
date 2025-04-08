@@ -64,7 +64,7 @@ def create_activity(
     return activity
 
 # User Streaks endpoints
-@router.get("/streaks", response_model=List[UserStreakResponse])
+@router.get("/", response_model=List[UserStreakResponse])
 def get_user_streaks(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -73,31 +73,8 @@ def get_user_streaks(
     Get all streaks for the current user
     """
     streak_repo = UserStreakRepository(db)
-    return streak_repo.get_by_user(int(current_user["sub"]))
+    return streak_repo.get_by_user(int(current_user["id"]))
 
-@router.get("/streaks/{activity_id}", response_model=UserStreakResponse)
-def get_user_streak(
-    activity_id: int,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Get a specific streak for the current user
-    """
-    streak_repo = UserStreakRepository(db)
-    streak = streak_repo.get_by_user_and_activity(
-        user_id=int(current_user["sub"]),
-        activity_id=activity_id
-    )
-    
-    if not streak:
-        # Create a new streak if it doesn't exist
-        streak = streak_repo.create_or_update(
-            user_id=int(current_user["sub"]),
-            activity_id=activity_id
-        )
-    
-    return streak
 
 # Streak Completions endpoints
 @router.post("/completions", response_model=StreakCompletionResponse, status_code=status.HTTP_201_CREATED)
@@ -106,33 +83,33 @@ def complete_activity(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Mark an activity as completed
-    """
-    # Verify activity exists
     activity_repo = HealthActivityRepository(db)
     activity = activity_repo.get_by_id(completion_data.activity_id)
-    
     if not activity:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Activity not found"
-        )
-    
-    # Record completion
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    # 💥 Thêm đoạn này để tránh trùng
     completion_repo = StreakCompletionRepository(db)
-    completion = completion_repo.create(
-        user_id=int(current_user["sub"]),
+    existing = completion_repo.get_by_user_and_activity_date(
+        user_id=int(current_user["id"]),
         activity_id=completion_data.activity_id,
-        completion_date=completion_data.completed_date
+        completed_date=completion_data.completed_date
     )
-    
+    if existing:
+        raise HTTPException(status_code=400, detail="Already completed for today")
+
+    completion = completion_repo.create(
+        user_id=int(current_user["id"]),
+        activity_id=completion_data.activity_id,
+        completed_date=completion_data.completed_date
+    )
     return completion
+
 
 @router.get("/completions", response_model=List[StreakCompletionResponse])
 def get_completions(
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -148,8 +125,8 @@ def get_completions(
     elif not end_date:
         end_date = start_date
     
-    return completion_repo.get_by_user_and_date(
-        user_id=int(current_user["sub"]),
+    return completion_repo.get_by_user_date_range(
+        user_id=int(current_user["id"]),
         start_date=start_date,
         end_date=end_date
     )
@@ -166,6 +143,29 @@ def get_streak_stats(
     completion_repo = StreakCompletionRepository(db)
     
     return completion_repo.get_stats(
-        user_id=int(current_user["sub"]),
+        user_id=int(current_user["id"]),
         days=days
     )
+    
+@router.get("/{activity_id}", response_model=UserStreakResponse)
+def get_user_streak(
+    activity_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get a specific streak for the current user
+    """
+    streak_repo = UserStreakRepository(db)
+    streak = streak_repo.get_by_user_and_activity(
+        user_id=int(current_user["id"]),
+        activity_id=activity_id
+    )
+    
+        # Create a new streak if it doesn't exist
+    streak = streak_repo.create_or_update(
+        user_id=int(current_user["id"]),
+        activity_id=activity_id
+    )
+    
+    return streak

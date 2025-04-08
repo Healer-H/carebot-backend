@@ -7,6 +7,7 @@ from utils.db_manager import get_db
 from models.user import User
 from repositories.user_repo import UserRepository
 from repositories.badge_repo import BadgeRepository, UserBadgeRepository
+from models.badge import UserBadge,UserBadgeResponse
 from api.middleware import get_current_user
 
 router = APIRouter()
@@ -93,3 +94,42 @@ async def get_user_badges(
         }
         for user_badge in user_badges
     ]
+    
+    
+@router.post("/{user_id}/badges/{badge_id}", response_model=UserBadgeResponse)
+def award_badge(
+    user_id: int,
+    badge_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Award a badge to a user (admin only)
+    """
+    # TODO: Implement admin check here
+    
+    # Verify badge exists
+    badge_repo = BadgeRepository(db)
+    badge = badge_repo.get_by_id(badge_id)
+    
+    if not badge:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Badge not found"
+        )
+    
+    # Verify user exists
+    user_repo = UserRepository(db)
+    user = user_repo.get_by_id(user_id)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Award badge
+    user_badge_repo = UserBadgeRepository(db)
+    user_badge = user_badge_repo.award_badge(user_id, badge_id)
+    
+    return user_badge

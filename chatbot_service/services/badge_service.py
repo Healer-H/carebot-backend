@@ -1,8 +1,6 @@
 # services/badge_service.py
 from sqlalchemy.orm import Session
-from typing import List, Optional
-from datetime import datetime, timedelta
-
+from typing import List
 from repositories.badge_repo import BadgeRepository, UserBadgeRepository
 from repositories.health_streak_repo import UserStreakRepository, StreakCompletionRepository
 from models.badge import Badge

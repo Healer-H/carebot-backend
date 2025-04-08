@@ -1,4 +1,4 @@
-#chatbot_service\tests\utils
+#chatbot_service\tests\mock_data_generator.py
 import os
 import sys
 from datetime import datetime, timedelta, date

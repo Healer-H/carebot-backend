@@ -110,3 +110,4 @@ class StreakStatsResponse(BaseModel):
     total_completions: int
     days_with_completions: int
     period_days: int
+
