@@ -1,4 +1,9 @@
-def get_information(db, rag_service, query: str):
+from services.rag import RAGService
+from core.database import get_db
+
+db = next(get_db())
+
+def get_information(query: str):
     """
     get information from your knowledge base to answer questions.
 
@@ -9,6 +14,6 @@ def get_information(db, rag_service, query: str):
         Dictionary contain the relevants context to the query.
     """
 
-    context = rag_service.retrieve_relevant_context(db, query)
+    context = RAGService.retrieve_relevant_context(db, query)
 
     return { "context": context }
