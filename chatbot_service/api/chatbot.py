@@ -1,7 +1,11 @@
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+import json
+from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
+from enum import Enum
 
 from core.database import get_db
 from services.chat import ChatService
@@ -25,14 +29,30 @@ class ConversationListResponse(BaseModel):
     conversations: List[ConversationResponse]
     total: int
 
+class ToolInvocationState(str, Enum):
+    CALL = "call"
+    PARTIAL_CALL = "partial-call"
+    RESULT = "result"
+
+
+class ToolInvocation(BaseModel):
+    state: ToolInvocationState = Field(ToolInvocationState.CALL, description="State of tool invocation")
+    toolCallId: str = Field(..., description="ID of the tool call")
+    toolName: str = Field(..., description="Name of the tool being called")
+    args: Dict[str, Any] = Field(default={}, description="Arguments for the tool call")
+    result: Optional[Dict[str, Any]] = Field(default=None, description="Result of the tool call")
+
 
 class MessageCreate(BaseModel):
-    role: str = Field(..., description="Role of the message sender (user | assistant)")
+    role: str = Field(..., description="Role of the message sender (user | assistant | tool)")
     content: str = Field(..., description="The content of the message")
+    toolInvocations: Optional[List[ToolInvocation]] = Field(None, description="Tool calls in this message")
 
 
 class MessagesCreate(BaseModel):
-    messages: List[MessageCreate] = Field(..., description="List of messages to add to the conversation")
+    messages: List[MessageCreate] = Field(
+        ..., description="List of messages to add to the conversation"
+    )
 
 
 class ToolCallArguments(BaseModel):
@@ -41,12 +61,9 @@ class ToolCallArguments(BaseModel):
 
 
 class ToolResult(BaseModel):
-    tool_call_id: str = Field(...,
-                              description="ID of the tool call this result is for")
-    function_name: str = Field(...,
-                               description="Name of the function that was called")
-    result: Dict[str, Any] = Field(...,
-                                   description="Result of the function call")
+    tool_call_id: str = Field(..., description="ID of the tool call this result is for")
+    function_name: str = Field(..., description="Name of the function that was called")
+    result: Dict[str, Any] = Field(..., description="Result of the function call")
 
 
 class MessageResponse(BaseModel):
@@ -61,6 +78,67 @@ class MessageResponse(BaseModel):
 class ChatResponse(BaseModel):
     message: MessageResponse
     conversation_id: int
+
+
+
+def convert_to_openai_messages(
+    messages: List[MessageCreate],
+) -> List[ChatCompletionMessageParam]:
+    openai_messages = []
+
+    for message in messages:
+        parts = []
+        tool_calls = []
+
+        parts.append({"type": "text", "text": message.content})
+
+        # if message.experimental_attachments:
+        #     for attachment in message.experimental_attachments:
+        #         if attachment.contentType.startswith("image"):
+        #             parts.append(
+        #                 {"type": "image_url", "image_url": {"url": attachment.url}}
+        #             )
+        #
+        #         elif attachment.contentType.startswith("text"):
+        #             parts.append({"type": "text", "text": attachment.url})
+
+        if message.toolInvocations:
+            for toolInvocation in message.toolInvocations:
+                tool_calls.append(
+                    {
+                        "id": toolInvocation.toolCallId,
+                        "type": "function",
+                        "function": {
+                            "name": toolInvocation.toolName,
+                            "arguments": json.dumps(toolInvocation.args),
+                        },
+                    }
+                )
+
+        tool_calls_dict = (
+            {"tool_calls": tool_calls} if tool_calls else {"tool_calls": None}
+        )
+
+        openai_messages.append(
+            {
+                "role": message.role,
+                "content": parts,
+                **tool_calls_dict,
+            }
+        )
+
+        if message.toolInvocations:
+            for toolInvocation in message.toolInvocations:
+                tool_message = {
+                    "role": "tool",
+                    "tool_call_id": toolInvocation.toolCallId,
+                    "content": json.dumps(toolInvocation.result),
+                }
+
+                openai_messages.append(tool_message)
+
+    return openai_messages
+
 
 
 @router.post(
@@ -92,8 +170,7 @@ def get_user_conversations(
     user_id: str, skip: int = 0, limit: int = 20, db: Session = Depends(get_db)
 ):
     """Get all conversations for a user"""
-    conversations = ChatService.get_user_conversations(
-        db, user_id, skip, limit)
+    conversations = ChatService.get_user_conversations(db, user_id, skip, limit)
     return {"conversations": conversations, "total": len(conversations)}
 
 
@@ -112,7 +189,7 @@ def delete_conversation(conversation_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/conversations/{conversation_id}/messages", response_model=ChatResponse)
-def create_message(
+async def create_message(
     conversation_id: int, messages: MessagesCreate, db: Session = Depends(get_db)
 ):
     """Send multiple message and get a response"""
@@ -135,11 +212,46 @@ def create_message(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No user message found",
         )
-    
+
     response = ChatService.generate_response(
-        db, conversation_id, latest_message.content)
+        db, conversation_id, latest_message.content
+    )
 
     return {"message": response, "conversation_id": conversation_id}
+
+
+@router.post("/conversations/{conversation_id}/messages/stream")
+async def create_message_stream(
+    conversation_id: int, messages: MessagesCreate, db: Session = Depends(get_db)
+):
+    """Stream message responses for Vercel AI SDK"""
+    # Check if conversation exists
+    conversation = ChatService.get_conversation(db, conversation_id)
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation {conversation_id} not found",
+        )
+
+    latest_message = None
+    for message in messages.messages[::-1]:
+        if message.role == "user":
+            latest_message = message
+            break
+
+    if not latest_message:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No user message found",
+        )
+
+    # Add user message to conversation first
+    ChatService.add_user_message(db, conversation_id, latest_message.content)
+
+    # Stream the response
+    return await ChatService.generate_response_stream(
+        db, conversation_id, latest_message.content
+    )
 
 
 @router.post("/messages/{message_id}/tool-results", response_model=MessageResponse)

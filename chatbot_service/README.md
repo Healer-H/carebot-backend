@@ -12,7 +12,7 @@ A RAG-based chatbot service for a healthcare mobile application using FastAPI, P
 
 ## Prerequisites
 
-- Python 3.9+
+- Python 3.12.0
 - PostgreSQL with [pgvector](https://github.com/pgvector/pgvector) extension
 - OpenAI API key or Google Gemini API key
 
@@ -77,7 +77,3 @@ The chatbot integrates the following healthcare-specific tools:
 1. **Medication Information**: Provides details about medications including dosage, side effects, and interactions
 2. **Appointment Scheduling**: Allows users to schedule medical appointments
 3. **Symptom Checker**: Analyzes symptoms and suggests possible conditions
-
-## License
-
-[MIT License](LICENSE)
