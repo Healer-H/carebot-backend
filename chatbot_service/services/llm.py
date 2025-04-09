@@ -3,7 +3,7 @@ import json
 from openai import OpenAI, AsyncOpenAI
 import google.generativeai as genai
 from utils import function_to_schema
-from tools import get_weather, get_current_location
+from tools import get_weather, get_current_location, get_information
 
 from core.config import settings
 
@@ -31,7 +31,7 @@ class LLMService:
                 f"Unsupported LLM provider: {settings.LLM_PROVIDER}")
 
         # Register available tools
-        self.tools = [get_weather, get_current_location]
+        self.tools = [get_weather, get_current_location, get_information]
         self.tools_map = {tool.__name__: tool for tool in self.tools}
         self.tools_schema = [function_to_schema(tool) for tool in self.tools]
 
@@ -146,6 +146,66 @@ class LLMService:
 
         return formatted_messages
 
+    def convert_to_openai_messages(self, messages: List[Any]):
+        openai_messages = [
+            # {
+            #     "role": "system",
+            #     "content": (
+            #     "You are a helpful healthcare assistant. Provide accurate and helpful information about healthcare topics.\n\n"
+            #     "IMPORTANT TOOL USAGE INSTRUCTIONS:\n"
+            #     "- You have access to several tools that can provide real-time information. Always use these tools when appropriate.\n"
+            #     "- When a user asks for real-time or external information that can be answered by a tool, use that tool rather than providing general information.\n"
+            #     "- Use tools in a logical sequence. If one tool depends on the output of another tool, call them in the correct order.\n"
+            #     "- For location-based queries without a specified location, get the user's location first before using location-dependent tools.\n"
+            #     "- Read each tool's description carefully to understand when and how to use it appropriately.\n"
+            #     "- For queries requiring real-time data (weather, time, location, etc.), always prefer using the appropriate tool over giving general responses.")
+            # }
+        ]
+
+        for message in messages:
+            parts = []
+
+            parts.append({
+                'type': 'text',
+                'text': message.content
+            })
+
+            if (message.toolInvocations):
+                tool_calls = [
+                    {
+                        'id': tool_invocation.toolCallId,
+                        'type': 'function',
+                        'function': {
+                            'name': tool_invocation.toolName,
+                            'arguments': json.dumps(tool_invocation.args)
+                        }
+                    }
+                    for tool_invocation in message.toolInvocations]
+
+                openai_messages.append({
+                    "role": 'assistant',
+                    "tool_calls": tool_calls
+                })
+
+                tool_results = [
+                    {
+                        'role': 'tool',
+                        'content': json.dumps(tool_invocation.result),
+                        'tool_call_id': tool_invocation.toolCallId
+                    }
+                    for tool_invocation in message.toolInvocations]
+
+                openai_messages.extend(tool_results)
+
+                continue
+
+            openai_messages.append({
+                "role": message.role,
+                "content": parts
+            })
+
+        return openai_messages
+
     def generate_response(
         self,
         messages: List[Dict[str, str]],
@@ -165,8 +225,8 @@ class LLMService:
         """
         if self.provider == "openai":
             # Format messages for OpenAI
-            formatted_messages = self._format_openai_messages(
-                messages, context)
+
+
 
             # Initialize conversation history for this turn
             conversation_messages = formatted_messages.copy()
@@ -459,9 +519,9 @@ class LLMService:
 
     async def generate_response_stream(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Any],
         context: Optional[str] = None,
-    ) -> AsyncIterator[Dict[str, Any]]:
+    ) -> Any:
         """
         Stream a response from the LLM based on messages and optional context
 
@@ -479,178 +539,73 @@ class LLMService:
 
         if self.provider == "openai":
             # Format messages for OpenAI
-            formatted_messages = self._format_openai_messages(
-                messages, context)
+            openai_messages = self.convert_to_openai_messages(messages)
+            print(openai_messages)
 
             # Start streaming response
-            stream = await self.async_client.chat.completions.create(
+            stream = self.client.chat.completions.create(
                 model=self.model,
-                messages=formatted_messages,
+                messages=openai_messages,
                 tools=self.tools_schema,
-                tool_choice="required",
                 stream=True,
-                temperature=0.2
             )
 
-            tool_call_chunks = []
-            current_tool_calls = []
-            is_tool_call = False
+            draft_tool_calls = []
+            draft_tool_calls_index = -1
 
-            async for chunk in stream:
-                delta = chunk.choices[0].delta
+            for chunk in stream:
+                for choice in chunk.choices:
+                    if choice.finish_reason == "stop":
+                        continue
 
-                # Handle regular content
-                if delta.content:
-                    self.current_stream_content += delta.content
-                    yield {"content": delta.content}
+                    elif choice.finish_reason == "tool_calls":
+                        for tool_call in draft_tool_calls:
+                            yield '9:{{"toolCallId":"{id}","toolName":"{name}","args":{args}}}\n'.format(
+                                id=tool_call["id"],
+                                name=tool_call["name"],
+                                args=tool_call["arguments"])
 
-                # Handle tool calls
-                if delta.tool_calls:
-                    is_tool_call = True
-                    for tool_call in delta.tool_calls:
-                        # Find or create the tool call in our tracking list
-                        if not tool_call.index in range(len(tool_call_chunks)):
-                            # New tool call
-                            tool_call_chunks.append(
-                                {
-                                    "id": tool_call.id
-                                    or f"call_{len(tool_call_chunks)}",
-                                    "type": "function",
-                                    "function": {
-                                        "name": tool_call.function.name or "",
-                                        "arguments": tool_call.function.arguments or "",
-                                    },
-                                }
-                            )
-                        else:
-                            # Update existing tool call
-                            if tool_call.id:
-                                tool_call_chunks[tool_call.index]["id"] = tool_call.id
+                        for tool_call in draft_tool_calls:
+                            tool_result = self.tools_map[tool_call["name"]](
+                                **json.loads(tool_call["arguments"]))
 
-                            if tool_call.function.name:
-                                tool_call_chunks[tool_call.index]["function"][
-                                    "name"
-                                ] = tool_call.function.name
+                            yield 'a:{{"toolCallId":"{id}","toolName":"{name}","args":{args},"result":{result}}}\n'.format(
+                                id=tool_call["id"],
+                                name=tool_call["name"],
+                                args=tool_call["arguments"],
+                                result=json.dumps(tool_result))
+                            
+                    elif choice.delta.tool_calls:
+                        for tool_call in choice.delta.tool_calls:
+                            id = tool_call.id
+                            name = tool_call.function.name
+                            arguments = tool_call.function.arguments
 
-                            if tool_call.function.arguments:
-                                current_args = tool_call_chunks[tool_call.index][
-                                    "function"
-                                ]["arguments"]
-                                tool_call_chunks[tool_call.index]["function"][
-                                    "arguments"
-                                ] = (current_args + tool_call.function.arguments)
-
-                # If we're at the end of a tool call section, execute the tools
-                if is_tool_call and (
-                    not delta.tool_calls
-                    or chunk.choices[0].finish_reason == "tool_calls"
-                ):
-                    is_tool_call = False
-                    current_tool_calls = tool_call_chunks.copy()
-
-                    # Add tool calls to our tracking
-                    self.current_stream_tool_calls.extend(current_tool_calls)
-
-                    # Emit the tool calls chunk
-                    yield {"type": "tool_calls", "tool_calls": current_tool_calls}
-
-                    # Now execute each tool call and stream the results
-                    for tool_call in current_tool_calls:
-                        try:
-                            tool_name = tool_call["function"]["name"]
-                            tool_args = json.loads(
-                                tool_call["function"]["arguments"])
-
-                            if tool_name in self.tools_map:
-                                tool = self.tools_map[tool_name]
-                                result = tool(**tool_args)
-
-                                # Format the result
-                                tool_result = {
-                                    "tool_call_id": tool_call["id"],
-                                    "function_name": tool_name,
-                                    "result": result,
-                                }
-
-                                # Add to our tracking
-                                self.current_stream_tool_results.append(
-                                    tool_result)
-
-                                # Emit tool result
-                                yield {
-                                    "type": "tool_result",
-                                    "tool_call_id": tool_call["id"],
-                                    "content": json.dumps(result),
-                                }
-
-                                # Make a follow-up call with the tool result
-                                follow_up_messages = formatted_messages.copy()
-                                follow_up_messages.append(
-                                    {
-                                        "role": "assistant",
-                                        "content": None,
-                                        "tool_calls": [tool_call],
-                                    }
-                                )
-                                follow_up_messages.append(
-                                    {
-                                        "role": "tool",
-                                        "tool_call_id": tool_call["id"],
-                                        "content": json.dumps(result),
-                                    }
-                                )
-
-                                # Stream the follow-up response
-                                # follow_up_stream = (
-                                #     await self.async_client.chat.completions.create(
-                                #         model=self.model,
-                                #         messages=follow_up_messages,
-                                #         tools=self.tools_schema,
-                                #         tool_choice="auto",
-                                #         stream=True,
-                                #     )
-                                # )
-
-                                # Process the follow-up chunks
-                                # async for follow_chunk in follow_up_stream:
-                                #     follow_delta = follow_chunk.choices[0].delta
-
-                                #     if follow_delta.content:
-                                #         self.current_stream_content += (
-                                #             follow_delta.content
-                                #         )
-                                #         yield {"content": follow_delta.content}
-
-                                #     # Reset for possible new tool calls
-                                #     if follow_delta.tool_calls:
-                                #         print(
-                                #             f"Tool calls in follow-up: {follow_delta.tool_calls}")
-                                #         # We have another level of tool calls
-                                #         # (For simplicity, we're not handling nested tool calls recursively here)
-                                #         pass
+                            if (id is not None):
+                                draft_tool_calls_index += 1
+                                draft_tool_calls.append(
+                                    {"id": id, "name": name, "arguments": ""})
 
                             else:
-                                error_msg = f"Tool {tool_name} not found"
-                                yield {
-                                    "type": "tool_result",
-                                    "tool_call_id": tool_call["id"],
-                                    "content": json.dumps({"error": error_msg}),
-                                }
+                                draft_tool_calls[draft_tool_calls_index]["arguments"] += arguments
 
-                        except Exception as e:
-                            error_msg = f"Error executing tool: {str(e)}"
-                            yield {
-                                "type": "tool_result",
-                                "tool_call_id": tool_call["id"],
-                                "content": json.dumps({"error": error_msg}),
-                            }
+                    else:
+                        yield '0:{text}\n'.format(text=json.dumps(choice.delta.content))
 
-                    # Reset for next potential set of tool calls
-                    tool_call_chunks = []
+                
+                if chunk.choices == []:
+                    usage = chunk.usage
+                    prompt_tokens = usage.prompt_tokens
+                    completion_tokens = usage.completion_tokens
 
-                # Handle finish reason
-                if chunk.choices[0].finish_reason:
-                    yield {"finish_reason": chunk.choices[0].finish_reason}
+                    yield 'e:{{"finishReason":"{reason}","usage":{{"promptTokens":{prompt},"completionTokens":{completion}}},"isContinued":false}}\n'.format(
+                        reason="tool-calls" if len(
+                            draft_tool_calls) > 0 else "stop",
+                        prompt=prompt_tokens,
+                        completion=completion_tokens
+                    )
+
+          
 
         elif self.provider == "gemini":
             # Format messages for Gemini

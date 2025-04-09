@@ -21,7 +21,7 @@ def get_weather(location: str) -> str:
     if location not in weather_info:
         return f"22°C, Partly cloudy in {location}. Humidity: 60%."
         
-    return weather_info[location]
+    return {"weather_info": weather_info[location] }
 
     
 def get_current_location() -> str:
@@ -35,4 +35,4 @@ def get_current_location() -> str:
     """
     # In a real implementation, this would detect the user's location
     # For demo purposes, we'll return a fixed location
-    return "Ho Chi Minh City"
+    return { "location": "Ho Chi Minh City" }

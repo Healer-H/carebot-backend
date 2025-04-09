@@ -104,3 +104,5 @@ class RAGService:
         context = "\n\n".join([chunk.content for chunk in chunks])
         
         return context
+
+rag_service = RAGService() 

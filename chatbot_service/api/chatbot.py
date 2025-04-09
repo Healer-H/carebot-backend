@@ -222,9 +222,12 @@ async def create_message(
 
 @router.post("/conversations/{conversation_id}/messages/stream")
 async def create_message_stream(
-    conversation_id: int, messages: MessagesCreate, db: Session = Depends(get_db)
+    conversation_id: int, request: MessagesCreate, db: Session = Depends(get_db)
 ):
     """Stream message responses for Vercel AI SDK"""
+
+    messages = request.messages; 
+
     # Check if conversation exists
     conversation = ChatService.get_conversation(db, conversation_id)
     if not conversation:
@@ -233,25 +236,29 @@ async def create_message_stream(
             detail=f"Conversation {conversation_id} not found",
         )
 
-    latest_message = None
-    for message in messages.messages[::-1]:
-        if message.role == "user":
-            latest_message = message
-            break
+    # latest_message = None
+    # for message in messages[::-1]:
+    #     if message.role == "user":
+    #         latest_message = message
+    #         break
 
-    if not latest_message:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No user message found",
-        )
+    # if not latest_message:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_400_BAD_REQUEST,
+    #         detail="No user message found",
+    #     )
 
     # Add user message to conversation first
-    ChatService.add_user_message(db, conversation_id, latest_message.content)
+    # ChatService.add_user_message(db, conversation_id, latest_message.content)
 
     # Stream the response
-    return await ChatService.generate_response_stream(
-        db, conversation_id, latest_message.content
-    )
+    response = StreamingResponse(ChatService.generate_response_stream(
+        db, conversation_id, messages
+    ))
+
+    response.headers['x-vercel-ai-data-stream'] = 'v1'
+
+    return response
 
 
 @router.post("/messages/{message_id}/tool-results", response_model=MessageResponse)
