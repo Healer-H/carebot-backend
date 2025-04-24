@@ -305,3 +305,16 @@ def add_tool_result(
     updated_message = ChatService.add_tool_result(db, message_id, tool_results)
 
     return updated_message
+
+from services.rag import RAGService
+@router.post("/test-retrieval")
+def test_retrieval(
+    query: str, db: Session = Depends(get_db)
+):
+    """Test retrieval with a query"""
+
+    # Perform retrieval
+    context = RAGService.retrieve_relevant_context(db, query)
+    print(f"{context=}")
+
+    return {"context": context}

@@ -31,7 +31,7 @@ class LLMService:
                 f"Unsupported LLM provider: {settings.LLM_PROVIDER}")
 
         # Register available tools
-        self.tools = [get_weather, get_current_location, get_information]
+        self.tools = [get_information]
         self.tools_map = {tool.__name__: tool for tool in self.tools}
         self.tools_schema = [function_to_schema(tool) for tool in self.tools]
 
@@ -225,8 +225,6 @@ class LLMService:
         """
         if self.provider == "openai":
             # Format messages for OpenAI
-
-
 
             # Initialize conversation history for this turn
             conversation_messages = formatted_messages.copy()
@@ -540,13 +538,13 @@ class LLMService:
         if self.provider == "openai":
             # Format messages for OpenAI
             openai_messages = self.convert_to_openai_messages(messages)
-            print(openai_messages)
 
             # Start streaming response
             stream = self.client.chat.completions.create(
                 model=self.model,
                 messages=openai_messages,
                 tools=self.tools_schema,
+                max_tokens=512,
                 stream=True,
             )
 
@@ -566,15 +564,68 @@ class LLMService:
                                 args=tool_call["arguments"])
 
                         for tool_call in draft_tool_calls:
-                            tool_result = self.tools_map[tool_call["name"]](
-                                **json.loads(tool_call["arguments"]))
+                            try:
+                                # Execute the tool with proper error handling
+                                tool_name = tool_call["name"]
+                                tool_args = json.loads(tool_call["arguments"])
 
-                            yield 'a:{{"toolCallId":"{id}","toolName":"{name}","args":{args},"result":{result}}}\n'.format(
-                                id=tool_call["id"],
-                                name=tool_call["name"],
-                                args=tool_call["arguments"],
-                                result=json.dumps(tool_result))
-                            
+                                if tool_name in self.tools_map:
+                                    tool_fn = self.tools_map[tool_name]
+
+                                    # Execute the tool function
+                                    from sqlalchemy.orm import Session
+                                    from database import SessionLocal
+
+                                    try:
+                                        # Create a new session for this tool call
+                                        db = SessionLocal()
+
+                                        # Try to execute the tool with the session
+                                        if tool_name == "get_information":
+                                            # Special handling for get_information to pass db session
+                                            tool_result = tool_fn(
+                                                db=db, **tool_args)
+                                        else:
+                                            tool_result = tool_fn(**tool_args)
+
+                                        # Commit the session if successful
+                                        db.commit()
+                                    except Exception as db_err:
+                                        # Rollback on error
+                                        db.rollback()
+                                        raise db_err
+                                    finally:
+                                        # Always close the session
+                                        db.close()
+
+                                else:
+                                    tool_result = {
+                                        "error": f"Tool {tool_name} not found"}
+
+                                yield 'a:{{"toolCallId":"{id}","toolName":"{name}","args":{args},"result":{result}}}\n'.format(
+                                    id=tool_call["id"],
+                                    name=tool_call["name"],
+                                    args=tool_call["arguments"],
+                                    result=json.dumps(tool_result))
+
+                                if isinstance(tool_result, dict) and "sources" in tool_result:
+                                    print(f"sources: {tool_result['sources']}")
+                                    for source in tool_result["sources"]:
+                                        yield 'h:{{"sourceType":"url","id":"{id}","url":"{url}","title":"{title}"}}\n'.format(
+                                            id=source["id"],
+                                            url=source['url'],
+                                            title=source['title']
+                                        )
+
+                            except Exception as e:
+                                error_message = str(e)
+                                yield 'a:{{"toolCallId":"{id}","toolName":"{name}","args":{args},"result":{{"error":"{error_msg}"}}}}\n'.format(
+                                    id=tool_call["id"],
+                                    name=tool_call["name"],
+                                    args=tool_call["arguments"],
+                                    error_msg=error_message.replace('"', '\\"')
+                                )
+
                     elif choice.delta.tool_calls:
                         for tool_call in choice.delta.tool_calls:
                             id = tool_call.id
@@ -592,7 +643,6 @@ class LLMService:
                     else:
                         yield '0:{text}\n'.format(text=json.dumps(choice.delta.content))
 
-                
                 if chunk.choices == []:
                     usage = chunk.usage
                     prompt_tokens = usage.prompt_tokens
@@ -604,8 +654,6 @@ class LLMService:
                         prompt=prompt_tokens,
                         completion=completion_tokens
                     )
-
-          
 
         elif self.provider == "gemini":
             # Format messages for Gemini

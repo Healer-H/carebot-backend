@@ -120,6 +120,4 @@ class DocumentChunkRepository:
                 chunk_number=row.chunk_number
             )
             chunks.append(chunk)
-        print(f"{chunks=}")
-        print(f"Found {len(chunks)} similar chunks")
         return chunks

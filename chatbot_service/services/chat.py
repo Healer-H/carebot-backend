@@ -181,7 +181,6 @@ class ChatService:
         for conversation_turn in llm_response["conversation_turns"]:
             tool_calls.extend(conversation_turn.get("tool_calls", []))
             tool_results.extend(conversation_turn.get("tool_results", []))
-        print("LLM Response:", llm_response)
         # Add assistant response to conversation
         assistant_message = ChatService.add_assistant_message(
             db, conversation_id, llm_response["final_content"], tool_calls, tool_results
